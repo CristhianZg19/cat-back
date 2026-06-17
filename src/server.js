@@ -22,12 +22,12 @@ app.use(
   }),
 );
 app.use(express.json({ limit: '16kb' }));
-app.use(apiRateLimit);
 
 app.get('/health', (req, res) => {
   res.json({ success: true, service: 'sleepy-cat-api' });
 });
 
+app.use('/api', apiRateLimit);
 app.use(catRouter);
 
 app.use((req, res) => {
