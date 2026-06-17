@@ -1,7 +1,11 @@
 import { Router } from 'express';
+import { applyAffinityProgress } from '../domain/lunaAffinity.js';
 import { CatInteraction } from '../models/CatInteraction.js';
 
 export const catRouter = Router();
+
+const DEFAULT_USER_NAME = 'Amiga de Luna';
+const MAX_BATCHED_PETS = 25;
 
 const htmlEscape = (value) =>
   String(value ?? '')
@@ -36,26 +40,125 @@ const getClientIp = (req) => {
   return req.ip;
 };
 
+const normalizeUserName = (value) => {
+  const cleanValue = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return cleanValue.slice(0, 40);
+};
+
+const normalizeDeviceId = (value) => String(value ?? '').trim().slice(0, 120);
+
+const normalizeAffinityPoints = (value) => {
+  const points = Number(value);
+
+  if (!Number.isFinite(points) || points < 0) {
+    return 0;
+  }
+
+  return Math.floor(points);
+};
+
+const normalizePetCount = (value) => {
+  const count = Number(value);
+
+  if (!Number.isFinite(count) || count < 1) {
+    return 1;
+  }
+
+  return Math.min(Math.floor(count), MAX_BATCHED_PETS);
+};
+
+const serializeProfile = (profile) => ({
+  userName: profile.userName,
+  deviceId: profile.deviceId,
+  affinityPoints: profile.affinityPoints,
+  currentLevel: profile.currentLevel,
+  levelTitle: profile.levelTitle,
+  unlockedMemories: profile.unlockedMemories,
+  unlockedLevels: profile.unlockedLevels,
+  lastInteractionAt: profile.lastInteractionAt,
+});
+
+const findOrCreateProfile = async ({ deviceId, userName, ip, seedAffinityPoints = 0 }) => {
+  const now = new Date();
+  const cleanUserName = normalizeUserName(userName);
+  const profileName = cleanUserName || DEFAULT_USER_NAME;
+  let profile = await CatInteraction.findOne({ deviceId });
+
+  if (!profile) {
+    profile = new CatInteraction({
+      ip,
+      userName: profileName,
+      deviceId,
+      affinityPoints: seedAffinityPoints,
+      firstInteractionAt: now,
+      lastInteractionAt: now,
+    });
+  } else {
+    profile.ip = ip;
+    profile.userName = cleanUserName || profile.userName || DEFAULT_USER_NAME;
+    profile.affinityPoints = Math.max(profile.affinityPoints ?? 0, seedAffinityPoints);
+    profile.lastInteractionAt = now;
+  }
+
+  applyAffinityProgress(profile);
+  await profile.save();
+
+  return profile;
+};
+
+catRouter.post('/api/cat/register', async (req, res, next) => {
+  try {
+    const ip = getClientIp(req);
+    const userName = normalizeUserName(req.body?.userName);
+    const deviceId = normalizeDeviceId(req.body?.deviceId);
+    const affinityPoints = normalizeAffinityPoints(req.body?.affinityPoints);
+
+    if (!userName || !deviceId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Luna necesita un nombre y un dispositivo para recordar esta amistad.',
+      });
+    }
+
+    const profile = await findOrCreateProfile({
+      deviceId,
+      userName,
+      ip,
+      seedAffinityPoints: affinityPoints,
+    });
+
+    res.json({ success: true, profile: serializeProfile(profile) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 catRouter.post('/api/cat/pet', async (req, res, next) => {
   try {
-    const now = new Date();
     const ip = getClientIp(req);
+    const userName = normalizeUserName(req.body?.userName);
+    const deviceId = normalizeDeviceId(req.body?.deviceId);
+    const petCount = normalizePetCount(req.body?.count);
 
-    await CatInteraction.findOneAndUpdate(
-      { ip },
-      {
-        $inc: { totalPets: 1 },
-        $set: { lastInteractionAt: now },
-        $setOnInsert: { firstInteractionAt: now },
-      },
-      {
-        new: true,
-        upsert: true,
-        setDefaultsOnInsert: true,
-      },
-    );
+    if (!deviceId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Luna necesita reconocer este dispositivo antes de guardar afinidad.',
+      });
+    }
 
-    res.json({ success: true });
+    const profile = await findOrCreateProfile({
+      deviceId,
+      userName,
+      ip,
+    });
+
+    profile.affinityPoints += petCount;
+    profile.lastInteractionAt = new Date();
+    applyAffinityProgress(profile);
+    await profile.save();
+
+    res.json({ success: true, profile: serializeProfile(profile) });
   } catch (error) {
     next(error);
   }
@@ -67,27 +170,42 @@ catRouter.get('/data/cat', async (req, res, next) => {
       return res.status(404).send('Not found');
     }
 
-    const [topUsers, totalUsers, totals] = await Promise.all([
-      CatInteraction.find().sort({ totalPets: -1 }).limit(10).lean(),
+    const [topFriends, totalUsers, totals] = await Promise.all([
+      CatInteraction.find().sort({ affinityPoints: -1 }).limit(10).lean(),
       CatInteraction.countDocuments(),
       CatInteraction.aggregate([
         {
           $group: {
             _id: null,
-            totalPets: { $sum: '$totalPets' },
+            affinityPoints: { $sum: '$affinityPoints' },
           },
         },
       ]),
     ]);
 
-    const totalPets = totals[0]?.totalPets ?? 0;
-    const rows = topUsers
+    const totalAffinity = totals[0]?.affinityPoints ?? 0;
+    const rankingRows = topFriends
+      .map(
+        (item, index) => `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${htmlEscape(item.userName)}</td>
+            <td>${item.currentLevel}</td>
+            <td>${item.affinityPoints}</td>
+          </tr>
+        `,
+      )
+      .join('');
+
+    const detailRows = topFriends
       .map(
         (item) => `
           <tr>
+            <td>${htmlEscape(item.userName)}</td>
+            <td>${item.currentLevel}</td>
+            <td>${htmlEscape(item.levelTitle)}</td>
+            <td>${item.affinityPoints}</td>
             <td>${htmlEscape(item.ip)}</td>
-            <td>${item.totalPets}</td>
-            <td>${formatDate(item.firstInteractionAt)}</td>
             <td>${formatDate(item.lastInteractionAt)}</td>
           </tr>
         `,
@@ -100,37 +218,46 @@ catRouter.get('/data/cat', async (req, res, next) => {
         <head>
           <meta charset="utf-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1" />
-          <title>Sleepy Cat Data</title>
+          <title>Afinidad con Luna</title>
           <style>
             :root {
               color-scheme: light;
               font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-              background: #f7efe5;
-              color: #201913;
+              background: #f8edf2;
+              color: #251f24;
             }
 
             body {
               margin: 0;
               min-height: 100vh;
               background:
-                linear-gradient(140deg, rgba(246, 221, 203, 0.9), rgba(218, 238, 244, 0.95) 52%, rgba(227, 241, 224, 0.9));
+                linear-gradient(140deg, rgba(252, 226, 236, 0.94), rgba(223, 238, 248, 0.95) 52%, rgba(229, 244, 232, 0.92));
             }
 
             main {
-              width: min(1040px, calc(100% - 32px));
+              width: min(1100px, calc(100% - 32px));
               margin: 0 auto;
               padding: 40px 0;
             }
 
-            h1 {
-              margin: 0 0 8px;
-              font-size: clamp(2rem, 5vw, 3.4rem);
+            h1,
+            h2 {
+              margin: 0;
               letter-spacing: 0;
             }
 
+            h1 {
+              font-size: clamp(2rem, 5vw, 3.35rem);
+            }
+
+            h2 {
+              margin-bottom: 16px;
+              font-size: clamp(1.25rem, 3vw, 1.8rem);
+            }
+
             p {
-              margin: 0 0 28px;
-              color: #5b5148;
+              margin: 8px 0 28px;
+              color: #6b5a63;
             }
 
             .stats {
@@ -140,12 +267,16 @@ catRouter.get('/data/cat', async (req, res, next) => {
               margin-bottom: 28px;
             }
 
+            .stat,
+            .panel {
+              border: 1px solid rgba(72, 43, 55, 0.12);
+              border-radius: 8px;
+              background: rgba(255, 255, 255, 0.7);
+              box-shadow: 0 16px 50px rgba(83, 49, 63, 0.08);
+            }
+
             .stat {
               padding: 18px;
-              border: 1px solid rgba(32, 25, 19, 0.12);
-              border-radius: 8px;
-              background: rgba(255, 255, 255, 0.66);
-              box-shadow: 0 16px 50px rgba(75, 47, 26, 0.08);
             }
 
             .stat strong {
@@ -154,32 +285,34 @@ catRouter.get('/data/cat', async (req, res, next) => {
               line-height: 1;
             }
 
+            .panel {
+              padding: 20px;
+              margin-bottom: 22px;
+            }
+
             .table-wrap {
               overflow-x: auto;
-              border: 1px solid rgba(32, 25, 19, 0.12);
-              border-radius: 8px;
-              background: rgba(255, 255, 255, 0.72);
             }
 
             table {
               width: 100%;
               border-collapse: collapse;
-              min-width: 700px;
+              min-width: 760px;
             }
 
             th,
             td {
               padding: 14px 16px;
               text-align: left;
-              border-bottom: 1px solid rgba(32, 25, 19, 0.1);
+              border-bottom: 1px solid rgba(72, 43, 55, 0.1);
             }
 
             th {
-              color: #6a4b36;
+              color: #8a4662;
               font-size: 0.78rem;
               text-transform: uppercase;
               letter-spacing: 0.06em;
-              background: rgba(255, 247, 236, 0.8);
+              background: rgba(255, 245, 250, 0.8);
             }
 
             tr:last-child td {
@@ -189,35 +322,59 @@ catRouter.get('/data/cat', async (req, res, next) => {
         </head>
         <body>
           <main>
-            <h1>Sleepy Cat</h1>
-            <p>Top 10 usuarios más cariñosos</p>
+            <h1>🌙 Afinidad con Luna</h1>
+            <p>Un registro suave de la amistad que Luna está construyendo con cada usuaria.</p>
 
             <section class="stats" aria-label="Resumen">
               <div class="stat">
-                <span>Total de usuarios</span>
+                <span>Total de amigas</span>
                 <strong>${totalUsers}</strong>
               </div>
               <div class="stat">
-                <span>Total de caricias</span>
-                <strong>${totalPets}</strong>
+                <span>Afinidad acumulada</span>
+                <strong>${totalAffinity}</strong>
               </div>
             </section>
 
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>IP</th>
-                    <th>Total Caricias</th>
-                    <th>Primera Interacción</th>
-                    <th>Última Interacción</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${rows || '<tr><td colspan="4">Aún no hay caricias registradas.</td></tr>'}
-                </tbody>
-              </table>
-            </div>
+            <section class="panel">
+              <h2>🏆 Top amigas de Luna</h2>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Posición</th>
+                      <th>Nombre</th>
+                      <th>Nivel</th>
+                      <th>Afinidad</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rankingRows || '<tr><td colspan="4">Luna aún está esperando sus primeras amigas.</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h2>Detalle de actividad</h2>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Nombre</th>
+                      <th>Nivel</th>
+                      <th>Título</th>
+                      <th>Afinidad</th>
+                      <th>IP</th>
+                      <th>Última actividad</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${detailRows || '<tr><td colspan="6">No hay actividad registrada todavía.</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </main>
         </body>
       </html>

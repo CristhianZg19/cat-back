@@ -1,6 +1,6 @@
-# Sleepy Cat Backend
+# Afinidad con Luna Backend
 
-Node.js + Express + MongoDB API for Sleepy Cat interactions.
+Node.js + Express + MongoDB API for Luna's affinity system.
 
 ## Environment
 
@@ -15,5 +15,6 @@ CORS_ORIGIN=http://localhost:5173
 
 ## Routes
 
+- `POST /api/cat/register`
 - `POST /api/cat/pet`
 - `GET /data/cat?key=super-secret-key`

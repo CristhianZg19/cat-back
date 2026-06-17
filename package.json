@@ -1,7 +1,7 @@
 {
   "name": "sleepy-cat-back",
   "version": "1.0.0",
-  "description": "Sleepy Cat backend API",
+  "description": "Afinidad con Luna backend API",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
