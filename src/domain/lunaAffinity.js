@@ -73,12 +73,17 @@ export const LUNA_MEMORIES = [
     level: 3,
     title: 'Te presento a mi mamá',
     text: 'Ella ya no está conmigo, pero la llevo en mis recuerdos más suaves. Cuando me acompañas con cariño, siento un poquito de la calma que ella me dejó.',
-    activeLevelOnly: true,
   },
   {
     id: 'safe-sleeping-place',
     level: 5,
     text: 'Mi lugar favorito para dormir es donde me siento protegida.',
+  },
+  {
+    id: 'luna-with-mama-ai',
+    level: 5,
+    title: 'Así me imagino con mi mamá',
+    text: 'Esta imagen fue creada con IA, pero para mí se siente como un sueño suave: yo descansando junto a mi mamá, como si todavía pudiera abrazarme con su calma.',
   },
   {
     id: 'closed-eyes-trust',
@@ -108,9 +113,7 @@ export const getUnlockedLevels = (affinityPoints = 0) =>
 
 export const getUnlockedMemories = (affinityPoints = 0) => {
   const currentLevel = getCurrentAffinityLevel(affinityPoints);
-  return LUNA_MEMORIES.filter((memory) =>
-    memory.activeLevelOnly ? currentLevel.level === memory.level : currentLevel.level >= memory.level,
-  ).map((memory) => memory.text);
+  return LUNA_MEMORIES.filter((memory) => currentLevel.level >= memory.level).map((memory) => memory.text);
 };
 
 export const applyAffinityProgress = (profile) => {
