@@ -339,6 +339,7 @@ catRouter.patch('/api/cat/state', async (req, res, next) => {
 catRouter.post('/api/cat/reset', async (req, res, next) => {
   try {
     const ip = getClientIp(req);
+    const userName = normalizeUserName(req.body?.userName);
     const deviceId = normalizeDeviceId(req.body?.deviceId);
 
     if (!deviceId) {
@@ -348,7 +349,21 @@ catRouter.post('/api/cat/reset', async (req, res, next) => {
       });
     }
 
-    const profile = await CatInteraction.findOne({ deviceId });
+    let profile = await CatInteraction.findOne({ deviceId });
+
+    if (!profile) {
+      const now = new Date();
+
+      profile = new CatInteraction({
+        ip,
+        userName: userName || DEFAULT_USER_NAME,
+        deviceId,
+        affinityPoints: 0,
+        firstInteractionAt: now,
+        lastInteractionAt: now,
+        lastActivityAt: now,
+      });
+    }
 
     if (!profile) {
       return res.status(404).json({
@@ -358,6 +373,11 @@ catRouter.post('/api/cat/reset', async (req, res, next) => {
     }
 
     profile.ip = ip;
+
+    if (userName) {
+      profile.userName = userName;
+    }
+
     resetProfileProgress(profile);
     await profile.save();
 
