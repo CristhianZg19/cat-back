@@ -115,6 +115,14 @@ const serializeProfile = (profile) => ({
   lastInteractionAt: profile.lastInteractionAt,
 });
 
+const getProgressSignature = (profile) =>
+  JSON.stringify({
+    currentLevel: profile.currentLevel,
+    levelTitle: profile.levelTitle,
+    unlockedLevels: profile.unlockedLevels ?? [],
+    unlockedMemories: profile.unlockedMemories ?? [],
+  });
+
 const findOrCreateProfile = async ({ deviceId, userName, ip, seedAffinityPoints = 0 }) => {
   const now = new Date();
   const cleanUserName = normalizeUserName(userName);
@@ -200,13 +208,15 @@ catRouter.get('/api/cat/progress/:deviceId', async (req, res, next) => {
 
     const previousState = profile.catVisualState;
     const previousSleepAt = profile.lastSleepAt?.getTime?.() ?? null;
+    const previousProgress = getProgressSignature(profile);
 
     resolveCatVisualState(profile);
     applyAffinityProgress(profile);
 
     if (
       profile.catVisualState !== previousState ||
-      (profile.lastSleepAt?.getTime?.() ?? null) !== previousSleepAt
+      (profile.lastSleepAt?.getTime?.() ?? null) !== previousSleepAt ||
+      getProgressSignature(profile) !== previousProgress
     ) {
       await profile.save();
     }
@@ -334,6 +344,7 @@ catRouter.get('/data/cat', async (req, res, next) => {
       topFriends.map(async (profile) => {
         const previousState = profile.catVisualState;
         const previousSleepAt = profile.lastSleepAt?.getTime?.() ?? null;
+        const previousProgress = getProgressSignature(profile);
 
         profile.lastActivityAt = profile.lastActivityAt ?? profile.lastInteractionAt ?? profile.updatedAt ?? new Date();
         profile.catVisualState = profile.catVisualState ?? 'sleeping';
@@ -342,7 +353,8 @@ catRouter.get('/data/cat', async (req, res, next) => {
 
         if (
           profile.catVisualState !== previousState ||
-          (profile.lastSleepAt?.getTime?.() ?? null) !== previousSleepAt
+          (profile.lastSleepAt?.getTime?.() ?? null) !== previousSleepAt ||
+          getProgressSignature(profile) !== previousProgress
         ) {
           await profile.save();
         }

@@ -15,7 +15,7 @@ export const LUNA_AFFINITY_LEVELS = [
     level: 3,
     title: 'Compañera de Bigotes 🐱',
     required: 60,
-    message: 'Tus caricias empiezan a convertirse en uno de mis momentos favoritos.',
+    message: 'Quiero presentarte a mi mamá. Ya no está conmigo, pero cuando me acaricias con tanta ternura siento que su amor todavía me acompaña.',
   },
   {
     level: 4,
@@ -63,9 +63,11 @@ export const LUNA_AFFINITY_LEVELS = [
 
 export const LUNA_MEMORIES = [
   {
-    id: 'little-shadow-chaser',
+    id: 'luna-mama',
     level: 3,
-    text: 'Cuando era pequeña me gustaba perseguir sombras por toda la casa.',
+    title: 'Te presento a mi mamá',
+    text: 'Ella ya no está conmigo, pero la llevo en mis recuerdos más suaves. Cuando me acompañas con cariño, siento un poquito de la calma que ella me dejó.',
+    activeLevelOnly: true,
   },
   {
     id: 'safe-sleeping-place',
@@ -100,7 +102,9 @@ export const getUnlockedLevels = (affinityPoints = 0) =>
 
 export const getUnlockedMemories = (affinityPoints = 0) => {
   const currentLevel = getCurrentAffinityLevel(affinityPoints);
-  return LUNA_MEMORIES.filter((memory) => currentLevel.level >= memory.level).map((memory) => memory.text);
+  return LUNA_MEMORIES.filter((memory) =>
+    memory.activeLevelOnly ? currentLevel.level === memory.level : currentLevel.level >= memory.level,
+  ).map((memory) => memory.text);
 };
 
 export const applyAffinityProgress = (profile) => {
