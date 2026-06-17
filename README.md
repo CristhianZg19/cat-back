@@ -17,4 +17,6 @@ CORS_ORIGIN=http://localhost:5173
 
 - `POST /api/cat/register`
 - `POST /api/cat/pet`
+- `GET /api/cat/progress/:deviceId`
+- `PATCH /api/cat/state`
 - `GET /data/cat?key=super-secret-key`

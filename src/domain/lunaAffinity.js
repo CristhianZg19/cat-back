@@ -84,6 +84,8 @@ export const LUNA_MEMORIES = [
   },
 ];
 
+export const INACTIVITY_SLEEP_MS = 60 * 60 * 1000;
+
 export const getCurrentAffinityLevel = (affinityPoints = 0) =>
   LUNA_AFFINITY_LEVELS.reduce((currentLevel, level) => {
     if (affinityPoints >= level.required) {
@@ -110,4 +112,19 @@ export const applyAffinityProgress = (profile) => {
   profile.unlockedMemories = getUnlockedMemories(profile.affinityPoints);
 
   return profile;
+};
+
+export const resolveCatVisualState = (userProgress) => {
+  const now = new Date();
+  const lastActivity = userProgress.lastActivityAt
+    ? new Date(userProgress.lastActivityAt)
+    : new Date(userProgress.lastInteractionAt ?? userProgress.updatedAt ?? now);
+  const inactiveTime = now.getTime() - lastActivity.getTime();
+
+  if (userProgress.catVisualState === 'awake' && inactiveTime >= INACTIVITY_SLEEP_MS) {
+    userProgress.catVisualState = 'sleeping';
+    userProgress.lastSleepAt = now;
+  }
+
+  return userProgress;
 };

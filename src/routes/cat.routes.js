@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { applyAffinityProgress } from '../domain/lunaAffinity.js';
+import { applyAffinityProgress, resolveCatVisualState } from '../domain/lunaAffinity.js';
 import { CatInteraction } from '../models/CatInteraction.js';
 
 export const catRouter = Router();
@@ -24,6 +24,31 @@ const formatDate = (value) => {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value));
+};
+
+const formatRelativeActivity = (value) => {
+  if (!value) {
+    return '-';
+  }
+
+  const diffMs = Date.now() - new Date(value).getTime();
+  const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));
+
+  if (diffMinutes < 1) {
+    return 'hace menos de 1 min';
+  }
+
+  if (diffMinutes < 60) {
+    return `hace ${diffMinutes} min`;
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60);
+
+  if (diffHours < 24) {
+    return `hace ${diffHours} h`;
+  }
+
+  return `hace ${Math.floor(diffHours / 24)} d`;
 };
 
 const getClientIp = (req) => {
@@ -67,6 +92,14 @@ const normalizePetCount = (value) => {
   return Math.min(Math.floor(count), MAX_BATCHED_PETS);
 };
 
+const normalizeCatVisualState = (value) => {
+  if (value === 'sleeping' || value === 'awake') {
+    return value;
+  }
+
+  return null;
+};
+
 const serializeProfile = (profile) => ({
   userName: profile.userName,
   deviceId: profile.deviceId,
@@ -75,6 +108,10 @@ const serializeProfile = (profile) => ({
   levelTitle: profile.levelTitle,
   unlockedMemories: profile.unlockedMemories,
   unlockedLevels: profile.unlockedLevels,
+  catVisualState: profile.catVisualState,
+  lastActivityAt: profile.lastActivityAt,
+  lastSleepAt: profile.lastSleepAt,
+  lastWakeUpAt: profile.lastWakeUpAt,
   lastInteractionAt: profile.lastInteractionAt,
 });
 
@@ -92,14 +129,18 @@ const findOrCreateProfile = async ({ deviceId, userName, ip, seedAffinityPoints 
       affinityPoints: seedAffinityPoints,
       firstInteractionAt: now,
       lastInteractionAt: now,
+      lastActivityAt: now,
     });
   } else {
     profile.ip = ip;
     profile.userName = cleanUserName || profile.userName || DEFAULT_USER_NAME;
     profile.affinityPoints = Math.max(profile.affinityPoints ?? 0, seedAffinityPoints);
-    profile.lastInteractionAt = now;
+    profile.lastInteractionAt = profile.lastInteractionAt ?? now;
+    profile.lastActivityAt = profile.lastActivityAt ?? profile.lastInteractionAt ?? now;
+    profile.catVisualState = profile.catVisualState ?? 'sleeping';
   }
 
+  resolveCatVisualState(profile);
   applyAffinityProgress(profile);
   await profile.save();
 
@@ -127,7 +168,51 @@ catRouter.post('/api/cat/register', async (req, res, next) => {
       seedAffinityPoints: affinityPoints,
     });
 
-    res.json({ success: true, profile: serializeProfile(profile) });
+    const data = serializeProfile(profile);
+    res.json({ success: true, data, profile: data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+catRouter.get('/api/cat/progress/:deviceId', async (req, res, next) => {
+  try {
+    const deviceId = normalizeDeviceId(req.params.deviceId);
+
+    if (!deviceId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Luna necesita reconocer este dispositivo para recordar su estado.',
+      });
+    }
+
+    const profile = await CatInteraction.findOne({ deviceId });
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: 'Luna todavía no conoce este dispositivo.',
+      });
+    }
+
+    profile.lastActivityAt = profile.lastActivityAt ?? profile.lastInteractionAt ?? profile.updatedAt ?? new Date();
+    profile.catVisualState = profile.catVisualState ?? 'sleeping';
+
+    const previousState = profile.catVisualState;
+    const previousSleepAt = profile.lastSleepAt?.getTime?.() ?? null;
+
+    resolveCatVisualState(profile);
+    applyAffinityProgress(profile);
+
+    if (
+      profile.catVisualState !== previousState ||
+      (profile.lastSleepAt?.getTime?.() ?? null) !== previousSleepAt
+    ) {
+      await profile.save();
+    }
+
+    const data = serializeProfile(profile);
+    res.json({ success: true, data, profile: data });
   } catch (error) {
     next(error);
   }
@@ -153,12 +238,74 @@ catRouter.post('/api/cat/pet', async (req, res, next) => {
       ip,
     });
 
+    const wasSleeping = profile.catVisualState !== 'awake';
+    const now = new Date();
+
     profile.affinityPoints += petCount;
-    profile.lastInteractionAt = new Date();
+    profile.lastInteractionAt = now;
+    profile.lastActivityAt = now;
+    profile.catVisualState = 'awake';
+
+    if (wasSleeping) {
+      profile.lastWakeUpAt = now;
+    }
+
     applyAffinityProgress(profile);
     await profile.save();
 
-    res.json({ success: true, profile: serializeProfile(profile) });
+    const data = serializeProfile(profile);
+    res.json({ success: true, data, profile: data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+catRouter.patch('/api/cat/state', async (req, res, next) => {
+  try {
+    const deviceId = normalizeDeviceId(req.body?.deviceId);
+    const catVisualState = normalizeCatVisualState(req.body?.catVisualState);
+
+    if (!deviceId || !catVisualState) {
+      return res.status(400).json({
+        success: false,
+        message: 'Luna solo puede sincronizarse como sleeping o awake.',
+      });
+    }
+
+    const profile = await CatInteraction.findOne({ deviceId });
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: 'Luna todavía no conoce este dispositivo.',
+      });
+    }
+
+    profile.lastActivityAt = profile.lastActivityAt ?? profile.lastInteractionAt ?? profile.updatedAt ?? new Date();
+    profile.catVisualState = profile.catVisualState ?? 'sleeping';
+    resolveCatVisualState(profile);
+
+    const now = new Date();
+    const previousState = profile.catVisualState;
+    profile.catVisualState = catVisualState;
+
+    if (catVisualState === 'sleeping' && previousState !== 'sleeping') {
+      profile.lastSleepAt = now;
+    }
+
+    if (catVisualState === 'awake') {
+      profile.lastActivityAt = now;
+
+      if (previousState !== 'awake') {
+        profile.lastWakeUpAt = now;
+      }
+    }
+
+    applyAffinityProgress(profile);
+    await profile.save();
+
+    const data = serializeProfile(profile);
+    res.json({ success: true, data, profile: data });
   } catch (error) {
     next(error);
   }
@@ -171,7 +318,7 @@ catRouter.get('/data/cat', async (req, res, next) => {
     }
 
     const [topFriends, totalUsers, totals] = await Promise.all([
-      CatInteraction.find().sort({ affinityPoints: -1 }).limit(10).lean(),
+      CatInteraction.find().sort({ affinityPoints: -1 }).limit(10),
       CatInteraction.countDocuments(),
       CatInteraction.aggregate([
         {
@@ -182,6 +329,25 @@ catRouter.get('/data/cat', async (req, res, next) => {
         },
       ]),
     ]);
+
+    await Promise.all(
+      topFriends.map(async (profile) => {
+        const previousState = profile.catVisualState;
+        const previousSleepAt = profile.lastSleepAt?.getTime?.() ?? null;
+
+        profile.lastActivityAt = profile.lastActivityAt ?? profile.lastInteractionAt ?? profile.updatedAt ?? new Date();
+        profile.catVisualState = profile.catVisualState ?? 'sleeping';
+        resolveCatVisualState(profile);
+        applyAffinityProgress(profile);
+
+        if (
+          profile.catVisualState !== previousState ||
+          (profile.lastSleepAt?.getTime?.() ?? null) !== previousSleepAt
+        ) {
+          await profile.save();
+        }
+      }),
+    );
 
     const totalAffinity = totals[0]?.affinityPoints ?? 0;
     const rankingRows = topFriends
@@ -205,8 +371,11 @@ catRouter.get('/data/cat', async (req, res, next) => {
             <td>${item.currentLevel}</td>
             <td>${htmlEscape(item.levelTitle)}</td>
             <td>${item.affinityPoints}</td>
+            <td>${item.catVisualState === 'awake' ? 'Awake' : 'Sleeping'}</td>
             <td>${htmlEscape(item.ip)}</td>
-            <td>${formatDate(item.lastInteractionAt)}</td>
+            <td>${formatRelativeActivity(item.lastActivityAt)}</td>
+            <td>${formatDate(item.lastWakeUpAt)}</td>
+            <td>${formatDate(item.lastSleepAt)}</td>
           </tr>
         `,
       )
@@ -297,7 +466,7 @@ catRouter.get('/data/cat', async (req, res, next) => {
             table {
               width: 100%;
               border-collapse: collapse;
-              min-width: 760px;
+              min-width: 980px;
             }
 
             th,
@@ -365,12 +534,15 @@ catRouter.get('/data/cat', async (req, res, next) => {
                       <th>Nivel</th>
                       <th>Título</th>
                       <th>Afinidad</th>
+                      <th>Estado visual</th>
                       <th>IP</th>
                       <th>Última actividad</th>
+                      <th>Última vez que despertó</th>
+                      <th>Última vez que durmió</th>
                     </tr>
                   </thead>
                   <tbody>
-                    ${detailRows || '<tr><td colspan="6">No hay actividad registrada todavía.</td></tr>'}
+                    ${detailRows || '<tr><td colspan="9">No hay actividad registrada todavía.</td></tr>'}
                   </tbody>
                 </table>
               </div>

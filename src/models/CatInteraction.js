@@ -46,6 +46,23 @@ const catInteractionSchema = new mongoose.Schema(
       type: [Number],
       default: [1],
     },
+    catVisualState: {
+      type: String,
+      enum: ['sleeping', 'awake'],
+      default: 'sleeping',
+    },
+    lastActivityAt: {
+      type: Date,
+      default: Date.now,
+    },
+    lastSleepAt: {
+      type: Date,
+      default: null,
+    },
+    lastWakeUpAt: {
+      type: Date,
+      default: null,
+    },
     firstInteractionAt: {
       type: Date,
       required: true,
