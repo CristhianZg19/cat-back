@@ -155,6 +155,21 @@ const findOrCreateProfile = async ({ deviceId, userName, ip, seedAffinityPoints 
   return profile;
 };
 
+const resetProfileProgress = (profile) => {
+  const now = new Date();
+
+  profile.affinityPoints = 0;
+  profile.lastInteractionAt = now;
+  profile.lastActivityAt = now;
+  profile.catVisualState = 'sleeping';
+  profile.lastSleepAt = now;
+  profile.lastWakeUpAt = null;
+
+  applyAffinityProgress(profile);
+
+  return profile;
+};
+
 catRouter.post('/api/cat/register', async (req, res, next) => {
   try {
     const ip = getClientIp(req);
@@ -312,6 +327,38 @@ catRouter.patch('/api/cat/state', async (req, res, next) => {
     }
 
     applyAffinityProgress(profile);
+    await profile.save();
+
+    const data = serializeProfile(profile);
+    res.json({ success: true, data, profile: data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+catRouter.post('/api/cat/reset', async (req, res, next) => {
+  try {
+    const ip = getClientIp(req);
+    const deviceId = normalizeDeviceId(req.body?.deviceId);
+
+    if (!deviceId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Luna necesita reconocer este dispositivo para volver al inicio.',
+      });
+    }
+
+    const profile = await CatInteraction.findOne({ deviceId });
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: 'Luna todavía no conoce este dispositivo.',
+      });
+    }
+
+    profile.ip = ip;
+    resetProfileProgress(profile);
     await profile.save();
 
     const data = serializeProfile(profile);
