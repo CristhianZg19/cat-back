@@ -9,7 +9,7 @@ export const LUNA_AFFINITY_LEVELS = [
     level: 2,
     title: 'Amiguita de Luna 🌙',
     required: 30,
-    message: 'Ya reconozco tu presencia y me siento tranquila cuando estás cerca.',
+    message: 'Ya reconozco tu presencia y quiero enseñarte una foto mía de chiquita.',
   },
   {
     level: 3,
@@ -62,6 +62,12 @@ export const LUNA_AFFINITY_LEVELS = [
 ];
 
 export const LUNA_MEMORIES = [
+  {
+    id: 'luna-kitten',
+    level: 2,
+    title: 'Esta soy yo de chiquita',
+    text: 'Mira, esta era yo cuando era una gatita pequeñita. Tenía esos ojitos curiosos y todavía estaba aprendiendo a confiar en el mundo.',
+  },
   {
     id: 'luna-mama',
     level: 3,
